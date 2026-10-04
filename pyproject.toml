@@ -1,0 +1,18 @@
+[project]
+name = "langchain_handson"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "black>=26.5.1",
+    "isort>=9.0.2",
+    "langchain>=1.4.3",
+    "langchain-ollama>=1.1.0",
+    "langchain-openai>=1.6.7",
+    "python-dotenv>=1.2.4",
+]
+
+[tool.black]
+target-version = ['py314']
+
