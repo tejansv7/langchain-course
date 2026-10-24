@@ -9,6 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# Google Cloud Service Account Keys
+gcp-key.json
+*-key.json
+*.json.secret
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -229,3 +234,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+SESSION_NOTES.md 
+TERMINAL_FIX_CONTEXT.md
