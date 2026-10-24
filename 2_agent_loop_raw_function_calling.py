@@ -1,12 +1,27 @@
+import sys
+import os
+from types import SimpleNamespace
+
+# Fix Windows console UTF-8 encoding for emojis/special characters
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import ollama
+# --- Ollama Setup (Original) ---
+# import ollama
+# MODEL = "qwen3:1.7b"
+
+# --- GCP Vertex AI Setup ---
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+
+MODEL = "gemini-2.5-flash"
 from langsmith import traceable
 
 MAX_ITERATIONS = 10
-MODEL = "qwen3:1.7b"
 
 
 # --- Tools (LangChain @tool decorator) ---
@@ -87,25 +102,68 @@ tools_for_llm = [
 #       """
 # We keep the manual JSON version here so you can see what @tool hides from you.
 
-# --- Helper: traced Ollama call ---
+# --- Helper: traced Chat call ---
 # Difference 3: Without LangChain, we must manually trace LLM calls for LangSmith.
 
+# Original Ollama Chat Helper:
+# @traceable(name="Ollama Chat", run_type="llm")
+# def ollama_chat_traced(messages):
+#     return ollama.chat(model=MODEL, tools=tools_for_llm, messages=messages)
 
-@traceable(name="Ollama Chat", run_type="llm")
-def ollama_chat_traced(messages):
-    return ollama.chat(model=MODEL, tools=tools_for_llm, messages=messages)
+# GCP Vertex AI Alternative:
+llm_gcp = ChatGoogleGenerativeAI(
+    model=MODEL,
+    vertexai=True,
+    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    location="us-central1",
+    temperature=0,
+)
+llm_with_tools = llm_gcp.bind_tools(tools_for_llm)
+
+
+@traceable(name="GCP Gemini Chat", run_type="llm")
+def gcp_chat_traced(messages):
+    lc_messages = []
+    last_call_id = "call_0"
+    for m in messages:
+        if isinstance(m, dict):
+            r = m.get("role")
+            c = m.get("content", "")
+            if r == "system":
+                lc_messages.append(SystemMessage(content=c))
+            elif r == "user":
+                lc_messages.append(HumanMessage(content=c))
+            elif r == "tool":
+                lc_messages.append(ToolMessage(content=c, tool_call_id=last_call_id))
+        elif hasattr(m, "raw_ai_message"):
+            raw = m.raw_ai_message
+            if raw.tool_calls:
+                last_call_id = raw.tool_calls[0].get("id", "call_0")
+            lc_messages.append(raw)
+        else:
+            lc_messages.append(m)
+
+    res = llm_with_tools.invoke(lc_messages)
+    calls = [
+        SimpleNamespace(function=SimpleNamespace(name=tc["name"], arguments=tc["args"]))
+        for tc in res.tool_calls
+    ]
+    txt = res.content
+    if isinstance(txt, list) and len(txt) > 0 and isinstance(txt[0], dict):
+        txt = txt[0].get("text", "")
+    msg = SimpleNamespace(content=txt, tool_calls=calls, raw_ai_message=res)
+    return SimpleNamespace(message=msg)
+
 
 # --- Agent Loop ---
 
 
-@traceable(name="Ollama Agent Loop")
+@traceable(name="Agent Loop")
 def run_agent(question: str):
     tools_dict = {
         "get_product_price": get_product_price,
         "apply_discount": apply_discount,
     }
-
-
 
     print(f"Question: {question}")
     print("=" * 60)
@@ -135,8 +193,11 @@ def run_agent(question: str):
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n--- Iteration {iteration} ---")
 
-        # Difference 5: ollama.chat() directly instead of llm_with_tools.invoke()
-        response = ollama_chat_traced(messages=messages)
+        # Original Ollama invocation:
+        # response = ollama_chat_traced(messages=messages)
+
+        # GCP Vertex AI alternative:
+        response = gcp_chat_traced(messages=messages)
         ai_message = response.message
 
         tool_calls = ai_message.tool_calls

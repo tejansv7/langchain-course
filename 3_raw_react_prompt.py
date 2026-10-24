@@ -1,15 +1,29 @@
 # CHANGE 1: Add re + inspect — we'll parse tool calls from raw text instead of structured JSON.
+import sys
+import os
 import re
+import json
 import inspect
+from types import SimpleNamespace
+
+# Fix Windows console UTF-8 encoding for emojis/special characters
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import ollama
+# --- Ollama Setup (Original) ---
+# import ollama
+# MODEL = "qwen3:1.7b"
+
+# --- GCP Vertex AI Setup ---
+from langchain_google_genai import ChatGoogleGenerativeAI
+MODEL = "gemini-2.5-flash"
 from langsmith import traceable
 
 MAX_ITERATIONS = 10
-MODEL = "qwen3:1.7b"
 
 
 # --- Tools (LangChain @tool decorator) ---
@@ -87,22 +101,40 @@ Thought:"""
 # CHANGE 4: Drop tools= from ollama.chat(). The LLM has no idea it's an agent —
 # all agency comes from the prompt above and our regex parsing below.
 
-@traceable(name="Ollama Chat", run_type="llm")
-def ollama_chat_traced(model, messages, options):
-    return ollama.chat(model=model, messages=messages, options=options)
+# Original Ollama Chat Helper:
+# @traceable(name="Ollama Chat", run_type="llm")
+# def ollama_chat_traced(model, messages, options):
+#     return ollama.chat(model=model, messages=messages, options=options)
+
+# GCP Vertex AI Alternative:
+llm_gcp = ChatGoogleGenerativeAI(
+    model=MODEL,
+    vertexai=True,
+    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    location="us-central1",
+    temperature=0,
+)
 
 
-
+@traceable(name="GCP Gemini Chat", run_type="llm")
+def gcp_chat_traced(model, messages, options):
+    user_prompt = messages[0]["content"] if messages else ""
+    stop_sequences = options.get("stop", ["\nObservation"]) if options else ["\nObservation"]
+    llm_with_stop = llm_gcp.bind(stop=stop_sequences)
+    res = llm_with_stop.invoke(user_prompt)
+    txt = res.content
+    if isinstance(txt, list) and len(txt) > 0 and isinstance(txt[0], dict):
+        txt = txt[0].get("text", "")
+    return SimpleNamespace(message=SimpleNamespace(content=txt))
 
 
 # --- Agent Loop ---
 
 
-@traceable(name="Ollama Agent Loop")
+@traceable(name="Agent Loop")
 def run_agent(question: str):
     print(f"Question: {question}")
     print("=" * 60)
-
 
     # CHANGE 5: One prompt string replaces the system/user message split.
     prompt = react_prompt.format(question=question)
@@ -114,7 +146,15 @@ def run_agent(question: str):
 
         # Stop token prevents the LLM from generating its own Observation —
         # we inject the real tool result instead.
-        response = ollama_chat_traced(
+        # Original Ollama invocation:
+        # response = ollama_chat_traced(
+        #     model=MODEL,
+        #     messages=[{"role": "user", "content": full_prompt}],
+        #     options={"stop": ["\nObservation"], "temperature": 0},
+        # )
+
+        # GCP Vertex AI alternative:
+        response = gcp_chat_traced(
             model=MODEL,
             messages=[{"role": "user", "content": full_prompt}],
             options={"stop": ["\nObservation"], "temperature": 0},
@@ -130,8 +170,6 @@ def run_agent(question: str):
             print("\n" + "=" * 60)
             print(f"Final Answer: {final_answer}")
             return final_answer
-
-
 
         # CHANGE 6: Parse tool calls from raw text with regex — fragile if LLM doesn't follow format.
         print(f"  [Parsing] Looking for Action and Action Input in LLM output...")
@@ -150,9 +188,20 @@ def run_agent(question: str):
 
         print(f"  [Tool Selected] {tool_name} with args: {tool_input_raw}")
 
-        # Split comma-separated args; strip key= prefix if LLM outputs key=value format
-        raw_args = [x.strip() for x in tool_input_raw.split(",")]
-        args = [x.split("=", 1)[-1].strip().strip("'\"") for x in raw_args]
+        # Split comma-separated args; strip key= prefix if LLM outputs key=value format (or JSON)
+        try:
+            parsed_json = json.loads(tool_input_raw)
+            if isinstance(parsed_json, dict):
+                args = list(parsed_json.values())
+            else:
+                args = [parsed_json]
+        except Exception:
+            raw_args = [x.strip() for x in tool_input_raw.split(",")]
+            args = [x.split("=", 1)[-1].strip().strip("'\"") for x in raw_args]
+
+        # Original parsing logic (preserved):
+        # raw_args = [x.strip() for x in tool_input_raw.split(",")]
+        # args = [x.split("=", 1)[-1].strip().strip("'\"") for x in raw_args]
 
         print(f"  [Tool Executing] {tool_name}({args})...")
         if tool_name not in tools:

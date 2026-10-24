@@ -1,3 +1,10 @@
+import sys
+import os
+
+# Fix Windows console UTF-8 encoding for emojis/special characters
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -6,9 +13,13 @@ from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langsmith import traceable
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 MAX_ITERATIONS = 10
-MODEL = "qwen3:1.7b"
+
+# --- Model Configuration ---
+# MODEL = "qwen3:1.7b"        # Original Ollama model
+MODEL = "gemini-2.5-flash"    # GCP Vertex AI alternative
 
 
 # --- Tools (LangChain @tool decorator) ---
@@ -40,7 +51,18 @@ def run_agent(question: str):
     tools = [get_product_price, apply_discount]
     tools_dict = {t.name: t for t in tools}
 
-    llm = init_chat_model(f"ollama:{MODEL}", temperature=0)
+    # --- LLM Initialization ---
+    # Original Ollama:
+    # llm = init_chat_model(f"ollama:{MODEL}", temperature=0)
+
+    # GCP Vertex AI Alternative:
+    llm = ChatGoogleGenerativeAI(
+        model=MODEL,
+        vertexai=True,
+        project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+        location="us-central1",
+        temperature=0,
+    )
     llm_with_tools = llm.bind_tools(tools)
 
     print(f"Question: {question}")
