@@ -1,7 +1,9 @@
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
 # from langchain_openai import ChatOpenAI
-from langchain_google_vertexai import ChatVertexAI
+#from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 import os 
 
 load_dotenv()
@@ -32,8 +34,16 @@ Musk's political activities, views, and statements have made him a polarizing fi
     )
 
     # llm = ChatOllama(temperature=0, model="gemma3:270m")
-    llm = ChatVertexAI(temperature=0, model="gemini-2.5-flash" , project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-    location="us-central1")
+    # llm = ChatVertexAI(temperature=0, model="gemini-2.5-flash" , project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    # location="us-central1")
+    llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    vertexai=True,
+    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    location="us-central1",
+    temperature=0
+)
+
     chain = summary_prompt_template | llm
 
     response = chain.invoke(input={"information": information})
